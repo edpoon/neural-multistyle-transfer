@@ -246,6 +246,7 @@ class NST(object):
         run = [0]
         # the value of run[0] here means we have finished that value of epochs
         while run[0] < epochs:
+            input_img.data.clamp_(0, 1)
             def closure():
                 input_image.data.clamp_(0, 1)
                 optimizer.zero_grad()
@@ -276,17 +277,6 @@ class NST(object):
             optimizer.step(closure)
 
         input_img.data.clamp_(0, 1)
-
-        if not silent:
-            self.model(input_img)
-            content_loss, style_loss = self.calculate_losses()
-            total_loss = style_weight * style_loss + content_weight * content_loss
-            print(f'Final style Loss : {style_loss.item()} content Loss: {content_loss.item()}')
-            print(f'Final total Loss : {total_loss.item()}')
-            losses['style_loss'].append(style_loss.item())
-            losses['content_loss'].append(content_loss.item())
-            losses['total_loss'].append(total_loss.item())
-
         return input_img if silent else input_img, losses
 
     def __str__(self):
