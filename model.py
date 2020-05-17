@@ -78,12 +78,12 @@ class StyleLoss(torch.nn.Module):
     '''
     def __init__(self):
         super(StyleLoss, self).__init__()
-        # self.target = gram_matrix(target).detach()
-        self.target = None
+        self.targets = None
+        self.weights = None
 
     def forward(self, x):
-        if self.target is not None:
-            self.loss = F.mse_loss(gram_matrix(x), self.target)
+        if self.targets is not None:
+            self.loss = sum([w * F.mse_loss(gram_matrix(x), t) for w, t in zip(self.weights, self.targets)])
         return x
 
 class NST(object):
@@ -116,21 +116,20 @@ class NST(object):
     Runs style transfer via repeatedly doing feedforward and backpropogation
     via lbfgs
     """
-    def __init__(self, content_layers, style_layers, style_image, content_image):
-        self.model, self.content_layers, self.style_layers = self.init_model(content_layers, style_layers)
+    def __init__(self,
+                 content_layers=['conv_4'],
+                 style_layers=['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']):
+        self.init_model(content_layers, style_layers)
 
-    @property
-    def style_target(self):
-        return self._style_target
-
-    @style_target.setter
-    def style_target(self, target):
+    def set_style_targets(self, targets, weights):
         with torch.no_grad():
-            self._style_target = target
+            self.style_targets = targets
+            self.weights = weights
             for layer in self.model.children():
-                target = layer(target)
+                targets = [layer(target) for target in targets]
                 if isinstance(layer, StyleLoss):
-                    layer.target = gram_matrix(target)
+                    layer.weights = weights
+                    layer.targets = [gram_matrix(target) for target in targets]
 
     @property
     def content_target(self):
@@ -149,7 +148,7 @@ class NST(object):
         '''Builds the model for multistyle neural style transfer from vgg19
 
         Parameters
-        m
+        ----------
         content_layers : [str]
         A list of layers that contributes to the total content loss
         style_layers : [str]
@@ -199,7 +198,9 @@ class NST(object):
             if isinstance(model[i], ContentLoss) or isinstance(model[i], StyleLoss):
                 break
 
-        return model[:i+1], content_losses, style_losses
+        self.model = model[:i+1]
+        self.content_layers = content_losses
+        self.style_layers = style_losses
 
     def calculate_losses(self):
         '''Calculates the total loss of an input image
