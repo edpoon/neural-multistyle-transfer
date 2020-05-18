@@ -86,7 +86,9 @@ class StyleLoss(torch.nn.Module):
             self.loss = sum([w * F.mse_loss(gram_matrix(x), t) for w, t in zip(self.weights, self.targets)])
         return x
 
-class NST(object):
+    def __str__(self):
+        return self.weights
+class NeuralStyle(object):
     """Runs the multistyle transfer algorithms
 
   Attributes
@@ -117,7 +119,7 @@ class NST(object):
     via lbfgs
     """
     def __init__(self,
-                 content_layers=['conv_4'],
+                 content_layers=['conv_4', 'conv_5'],
                  style_layers=['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']):
         self.init_model(content_layers, style_layers)
 
@@ -174,6 +176,7 @@ class NST(object):
                 layer = torch.nn.ReLU()
             elif isinstance(layer, torch.nn.MaxPool2d):
                 name = f'pool_{i}'
+                # layer = torch.nn.AvgPool2d(layer.kernel_size)
             elif isinstance(layer, torch.nn.BatchNorm2d):
                 name = f'bn_{i}'
 
@@ -205,12 +208,18 @@ class NST(object):
     def calculate_losses(self):
         '''Calculates the total loss of an input image
         '''
-        content_loss = sum([loss.loss for loss in self.content_layers]) / len(self.content_layers)
-        style_loss = sum([loss.loss for loss in self.style_layers]) / len(self.style_layers)
+        content_loss = sum([loss.loss for loss in self.content_layers]) # / len(self.content_layers)
+        style_loss = sum([loss.loss for loss in self.style_layers]) # / len(self.style_layers)
 
         return content_loss, style_loss
 
-    def style_transfer(self, input_image, epochs=300, style_weight=1000000, content_weight=1, silent=True):
+    def style_transfer(self,
+                       input_image,
+                       epochs=300,
+                       style_weight=1000000,
+                       content_weight=1,
+                       video=False,
+                       silent=True):
         '''Runs style transfer via repeatedly doing feedforward and backpropogation via lbfgs
 
         Parameters
@@ -225,59 +234,41 @@ class NST(object):
         content_weight : num
         The weight of the total content loss function in the total loss function
         '''
-        # make a copy of the input_image so that we don't modify the original image
-        input_img = input_image.clone().to(device)
-        optimizer = optim.LBFGS([input_img.requires_grad_()])
+        input_image.requires_grad_()
+        optimizer = optim.Adam([input_image],
+                               lr=1e-1,
+                               betas=(0.9, 0.999),
+                               eps=1e-08) if video else optim.LBFGS([input_image])
 
-        losses = {'style_loss': [], 'content_loss': [], 'total_loss': []}
-
-        if not silent:
-            # calculate initial loss, print and store them
-            self.model(input_img)
-            content_loss, style_loss = self.calculate_losses()
-            total_loss = style_weight * style_loss + content_weight * content_loss
-
-            print(f'Initial style Loss : {style_loss.item()} Initial content Loss: {content_loss.item()}')
-            print(f'Initial total Loss : {total_loss.item()}')
-            losses['style_loss'].append(style_loss.item())
-            losses['content_loss'].append(content_loss.item())
-            losses['total_loss'].append(total_loss.item())
-
+        losses = {'style': [], 'content': [], 'total': []}
         run = [0]
-        # the value of run[0] here means we have finished that value of epochs
+
         while run[0] < epochs:
-            input_img.data.clamp_(0, 1)
             def closure():
                 input_image.data.clamp_(0, 1)
                 optimizer.zero_grad()
-
-                self.model(input_img)
+                self.model(input_image)
                 content_loss, style_loss = self.calculate_losses()
                 total_loss = style_weight * style_loss + content_weight * content_loss
                 total_loss.backward()
 
                 if not silent:
-                    losses['style_loss'].append(style_loss.item())
-                    losses['content_loss'].append(content_loss.item())
-                    losses['total_loss'].append(total_loss.item())
+                    losses['style'].append(style_loss.item())
+                    losses['content'].append(content_loss.item())
+                    losses['total'].append(total_loss.item())
+                    if run[0] % 10 == 0:
+                        print(f'Epoch: {run[0]} | '
+                              f'Style loss: {style_loss} | '
+                              f'Content loss: {content_loss} |'
+                              f'Total Loss : {total_loss} | ')
 
-                # increase by 1 when we have finished this epoch
                 run[0] += 1
-
-                if not silent:
-                    # print losses every print_epoch epochs
-                    print_epoch = 10 # Change this if you want!
-
-                    if run[0] % print_epoch == 0:
-                        print("epoch {}:".format(run))
-                        print(f'style Loss : {style_loss.item()} content Loss: {content_loss.item()}')
-                        print(f'total Loss : {total_loss.item()}')
                 return total_loss
 
             optimizer.step(closure)
 
-        input_img.data.clamp_(0, 1)
-        return input_img if silent else input_img, losses
+        input_image.data.clamp_(0, 1)
+        return input_image.detach()
 
     def __str__(self):
         return str(self.model)
