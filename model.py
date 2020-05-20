@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision.models as models
+import copy
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,10 +37,10 @@ class Normalization(torch.nn.Module):
     forward(x):
     Normalizes the input the this layer
     '''
-    def __init__(self, means, stds):
+    def __init__(self, mean, std):
         super(Normalization, self).__init__()
-        self.mean = torch.tensor([[[mean]] for mean in means]).to(device)
-        self.std = torch.tensor([[[std]] for std in stds]).to(device)
+        self.mean = torch.tensor(mean).view(-1, 1, 1).to(device)
+        self.std = torch.tensor(std).view(-1, 1, 1).to(device)
 
     def forward(self, x):
         return (x - self.mean) / self.std
@@ -119,7 +120,7 @@ class NeuralStyle(object):
     via lbfgs
     """
     def __init__(self,
-                 content_layers=['conv_4', 'conv_5'],
+                 content_layers=['conv_4'],
                  style_layers=['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']):
         self.init_model(content_layers, style_layers)
 
@@ -131,7 +132,7 @@ class NeuralStyle(object):
                 targets = [layer(target) for target in targets]
                 if isinstance(layer, StyleLoss):
                     layer.weights = weights
-                    layer.targets = [gram_matrix(target) for target in targets]
+                    layer.targets = [gram_matrix(target).detach() for target in targets]
 
     @property
     def content_target(self):
@@ -142,7 +143,7 @@ class NeuralStyle(object):
         with torch.no_grad():
             self._content_target = target
             for layer in self.model.children():
-                target = layer(target)
+                target = layer(target).detach()
                 if isinstance(layer, ContentLoss):
                     layer.target = target
 
@@ -158,10 +159,11 @@ class NeuralStyle(object):
         '''
         # import vgg19 with the pretrained weights
         net = models.vgg19(pretrained=True).features.to(device).eval()
+        net = copy.deepcopy(net)
         # start our sequential model whose first layer in normalization
         model = torch.nn.Sequential()
-        model.add_module('norm_0', Normalization(means=[0.485, 0.456, 0.406],
-                                                 stds=[0.229, 0.224, 0.225]))
+        model.add_module('norm_0', Normalization(mean=[0.485, 0.456, 0.406],
+                                                 std=[0.229, 0.224, 0.225]))
         # keep track of the layers to compute style loss and content loss
         style_losses, content_losses = [], []
         i = 0
@@ -173,7 +175,7 @@ class NeuralStyle(object):
                 name = f'relu_{i}'
                 # the ReLU layer in the vgg19 implementation is done in place
                 # which will throw an error for autograd during backpropogation
-                layer = torch.nn.ReLU()
+                layer = torch.nn.ReLU(inplace=False)
             elif isinstance(layer, torch.nn.MaxPool2d):
                 name = f'pool_{i}'
                 # layer = torch.nn.AvgPool2d(layer.kernel_size)
@@ -213,13 +215,14 @@ class NeuralStyle(object):
 
         return content_loss, style_loss
 
-    def style_transfer(self,
-                       input_image,
-                       epochs=300,
-                       style_weight=1000000,
-                       content_weight=1,
-                       video=False,
-                       silent=True):
+
+    def transfer(self,
+                 input_image,
+                 epochs=300,
+                 style_weight=1000000,
+                 content_weight=1,
+                 video=False,
+                 silent=True):
         '''Runs style transfer via repeatedly doing feedforward and backpropogation via lbfgs
 
         Parameters
@@ -235,10 +238,8 @@ class NeuralStyle(object):
         The weight of the total content loss function in the total loss function
         '''
         input_image.requires_grad_()
-        optimizer = optim.Adam([input_image],
-                               lr=1e-1,
-                               betas=(0.9, 0.999),
-                               eps=1e-08) if video else optim.LBFGS([input_image])
+        # optimizer = optim.Adam([input_image], lr=1e-1, betas=(0.9, 0.999), eps=1e-08)
+        optimizer = optim.LBFGS([input_image])
 
         losses = {'style': [], 'content': [], 'total': []}
         run = [0]
@@ -269,6 +270,3 @@ class NeuralStyle(object):
 
         input_image.data.clamp_(0, 1)
         return input_image.detach()
-
-    def __str__(self):
-        return str(self.model)
