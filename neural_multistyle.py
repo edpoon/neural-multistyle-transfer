@@ -17,7 +17,7 @@ def style_transfer_image(args):
     size = image.size
     content_target = image_to_tensor(image, size).to(device)
     style_targets = [
-        image_to_tensor(Image.open(image), size)
+        image_to_tensor(Image.open(image), size).to(device)
         for image in args.style_targets
     ]
     n = len(style_targets)
@@ -26,7 +26,7 @@ def style_transfer_image(args):
     input_image = content_target.clone().to(device)
 
     neural_style = NeuralStyle(content_layers=CONTENT_LAYERS,
-                               style_layers=STYLE_LAYERS).to(device)
+                               style_layers=STYLE_LAYERS)
     neural_style.content_target = content_target
     neural_style.set_style_targets(style_targets, style_weights)
 
